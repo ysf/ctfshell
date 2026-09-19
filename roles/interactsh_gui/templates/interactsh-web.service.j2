@@ -1,0 +1,19 @@
+[Unit]
+Description=interactsh-web (Next.js GUI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory={{ interactsh_gui_root }}
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node {{ interactsh_gui_root }}/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

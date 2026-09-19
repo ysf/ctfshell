@@ -1,0 +1,86 @@
+services:
+  webhook:
+    image: webhooksite/webhook.site
+    container_name: webhook-site
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ webhook_site_http_port }}:80"
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: "https://{{ webhook_site_domain }}"
+      APP_LOG: errorlog
+      DB_CONNECTION: sqlite
+      REDIS_HOST: redis
+      BROADCAST_DRIVER: redis
+      CACHE_DRIVER: redis
+      QUEUE_DRIVER: redis
+      ECHO_HOST_MODE: path
+    volumes:
+      - webhook-storage:/var/www/html/storage
+      - webhook-db:/var/www/html/database
+      # Custom nginx.conf with real_ip_header so PHP sees the actual client IP
+      # (Caddy → 127.0.0.1:8084 strips the TCP source otherwise) and a
+      # sub_filter that injects /dark.css into every HTML response.
+      - {{ webhook_site_root }}/nginx.conf:/etc/nginx/conf.d/nginx.conf:ro
+      - {{ webhook_site_root }}/dark.css:/var/www/html/public/dark.css:ro
+    depends_on:
+      - redis
+
+  webhook-worker:
+    image: webhooksite/webhook.site
+    container_name: webhook-worker
+    restart: unless-stopped
+    command: php artisan queue:work --daemon --tries=3 --timeout=10
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: "https://{{ webhook_site_domain }}"
+      DB_CONNECTION: sqlite
+      REDIS_HOST: redis
+      BROADCAST_DRIVER: redis
+      CACHE_DRIVER: redis
+      QUEUE_DRIVER: redis
+    volumes:
+      - webhook-storage:/var/www/html/storage
+      - webhook-db:/var/www/html/database
+    depends_on:
+      - redis
+      - webhook
+
+  redis:
+    image: redis:alpine
+    container_name: webhook-redis
+    restart: unless-stopped
+    volumes:
+      - webhook-redis:/data
+
+  laravel-echo-server:
+    image: webhooksite/laravel-echo-server
+    container_name: laravel-echo-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6001:6001"
+    command:
+      - exec
+      - laravel-echo-server
+      - start
+      - --force
+    environment:
+      LARAVEL_ECHO_SERVER_AUTH_HOST: http://webhook
+      LARAVEL_ECHO_SERVER_HOST: 0.0.0.0
+      LARAVEL_ECHO_SERVER_PORT: 6001
+      ECHO_REDIS_PORT: 6379
+      ECHO_REDIS_HOSTNAME: redis
+      ECHO_PROTOCOL: http
+      ECHO_ALLOW_CORS: "true"
+      ECHO_ALLOW_ORIGIN: "*"
+      ECHO_ALLOW_METHODS: "*"
+      ECHO_ALLOW_HEADERS: "*"
+    depends_on:
+      - redis
+
+volumes:
+  webhook-storage:
+  webhook-db:
+  webhook-redis:

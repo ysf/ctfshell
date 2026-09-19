@@ -1,0 +1,271 @@
+---
+# Create CTF server infrastructure
+- hosts: localhost
+  vars_files:
+    - vault.yaml
+    - config.local.yaml
+  vars:
+    server_name: "ctfshell"
+    volume_name: "ctfshell-volume"
+
+  tasks:
+    - name: Get all snapshots
+      hetzner.hcloud.hcloud_image_info:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        type: snapshot
+      register: all_snapshots
+
+    - name: Filter Arch Linux snapshots
+      set_fact:
+        arch_snapshots: "{{ all_snapshots.hcloud_image_info | selectattr('labels.os-flavor', 'defined') | selectattr('labels.os-flavor', 'equalto', 'archlinux') | list }}"
+
+    - name: Debug filtered snapshots
+      debug:
+        msg: "Found {{ arch_snapshots | length }} Arch Linux snapshots"
+
+    - name: Set latest snapshot for server creation (by build time)
+      set_fact:
+        latest_snapshot: >-
+          {%- set ns = namespace(latest=arch_snapshots[0]) -%}
+          {%- for snapshot in arch_snapshots -%}
+            {%- if snapshot.labels['packer.io/build.time'] >= ns.latest.labels['packer.io/build.time'] -%}
+              {%- set ns.latest = snapshot -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ ns.latest }}
+      when: arch_snapshots | length > 0
+
+    - name: Show latest snapshot info
+      debug:
+        msg:
+          - "Latest snapshot ID: {{ latest_snapshot.id }}"
+          - "Latest snapshot description: {{ latest_snapshot.description | default('No description') }}"
+          - "Build time: {{ latest_snapshot.labels['packer.io/build.time'] }}"
+          - "Packer version: {{ latest_snapshot.labels['packer.io/version'] }}"
+      when: arch_snapshots | length > 0
+
+    - name: Fail if no Arch Linux snapshots found
+      fail:
+        msg: "No Arch Linux snapshots found with label os-flavor=archlinux"
+      when: arch_snapshots | length == 0
+
+    - name: create server
+      hetzner.hcloud.hcloud_server:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ server_name }}"
+        image: "{{ latest_snapshot.id }}"
+        server_type: cx22
+        location: nbg1
+        ssh_keys: ["{{ ssh_key_name }}"]
+        state: present
+        rescue_mode: linux64
+      register: server
+
+    - name: Attach volume to server
+      hetzner.hcloud.hcloud_volume:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ volume_name }}"
+        server: "{{ server_name }}"
+        state: present
+
+    - name: Wait for SSH
+      wait_for:
+        host: "{{ server.hcloud_server.ipv4_address }}"
+        port: 22
+        timeout: 300
+
+    - name: Remove old SSH host keys
+      shell: |
+        ssh-keygen -R {{ server.hcloud_server.ipv4_address }}
+        ssh-keygen -R {{ subdomain }}.{{ domain }}
+      ignore_errors: true
+
+    - name: Mount volume as /mnt/persistent
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ server.hcloud_server.ipv4_address}} '
+        # Volume finden
+        VOLUME_ID=$(ls /dev/disk/by-id/*Volume* 2>/dev/null | head -1)
+        if [ -n "$VOLUME_ID" ]; then
+          # Mount-Point erstellen
+          mkdir -p /mnt/persistent
+
+          # Mounten (Volume ist bereits formatiert)
+          if ! grep -q "/mnt/persistent" /proc/mounts; then
+            mount "$VOLUME_ID" /mnt/persistent
+          fi
+
+          # fstab updaten für automatisches Mount
+          if ! grep -q "/mnt/persistent" /etc/fstab; then
+            echo "$VOLUME_ID /mnt/persistent ext4 defaults 0 0" >> /etc/fstab
+          fi
+
+          echo "Volume mounted at /mnt/persistent"
+          df -h | grep persistent
+        else
+          echo "Volume not found!"
+          exit 1
+        fi
+        '
+    - name: Disable rescue mode
+      hetzner.hcloud.hcloud_server:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ server_name }}"
+        rescue_mode: no
+        state: present
+
+    - name: Reboot server
+      hetzner.hcloud.hcloud_server:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ server_name }}"
+        state: restarted
+
+    - name: Wait for server to come back up
+      wait_for:
+        host: "{{ server.hcloud_server.ipv4_address }}"
+        port: 22
+        timeout: 300
+
+    - name: Create DNS A record at Porkbun
+      sdorra.porkbun.porkbun_record:
+        state: present
+        domain: "{{ domain }}"
+        record_type: A
+        name: "{{ subdomain }}"
+        content: "{{ server.hcloud_server.ipv4_address }}"
+        ttl: 300
+        api_key: "{{ porkbun_api_key }}"
+        secret_api_key: "{{ porkbun_secret_key }}"
+      register: dns_result
+      tags: [dns]
+
+    - name: Lookup existing server IP for tagged runs
+      hetzner.hcloud.hcloud_server_info:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ server_name }}"
+      register: server_info
+      tags: [interactsh, dns, webhook]
+
+    - name: Set ctfshell_ipv4 fact
+      set_fact:
+        ctfshell_ipv4: "{{ (server.hcloud_server.ipv4_address | default(server_info.hcloud_server_info[0].ipv4_address)) }}"
+      tags: [interactsh, dns, webhook]
+
+    - name: Create A records for interactsh subdomain delegation
+      sdorra.porkbun.porkbun_record:
+        state: present
+        domain: "{{ domain }}"
+        record_type: A
+        name: "{{ item }}"
+        content: "{{ ctfshell_ipv4 }}"
+        ttl: 300
+        api_key: "{{ porkbun_api_key }}"
+        secret_api_key: "{{ porkbun_secret_key }}"
+      loop:
+        - "{{ interactsh_subdomain }}"
+        - "ns1.{{ interactsh_subdomain }}"
+        - "ns2.{{ interactsh_subdomain }}"
+      tags: [interactsh, dns, webhook]
+
+    - name: Create A record for webhook.site (wh.{{ domain }})
+      sdorra.porkbun.porkbun_record:
+        state: present
+        domain: "{{ domain }}"
+        record_type: A
+        name: wh
+        content: "{{ ctfshell_ipv4 }}"
+        ttl: 300
+        api_key: "{{ porkbun_api_key }}"
+        secret_api_key: "{{ porkbun_secret_key }}"
+      tags: [webhook, dns]
+
+    # NOTE: sdorra.porkbun.porkbun_record cannot create two NS records with the
+    # same hostname (it identifies records by name+type only). We call the
+    # Porkbun API directly: retrieve existing NS records first, then create
+    # only the ones that are missing.
+    - name: Retrieve existing NS records for interactsh subdomain
+      ansible.builtin.uri:
+        url: "https://api.porkbun.com/api/json/v3/dns/retrieveByNameType/{{ domain }}/NS/{{ interactsh_subdomain }}"
+        method: POST
+        body_format: json
+        body:
+          apikey: "{{ porkbun_api_key }}"
+          secretapikey: "{{ porkbun_secret_key }}"
+      register: porkbun_ns_existing
+      tags: [interactsh, dns, webhook]
+
+    - name: Delegate interactsh subdomain via NS records
+      ansible.builtin.uri:
+        url: "https://api.porkbun.com/api/json/v3/dns/create/{{ domain }}"
+        method: POST
+        body_format: json
+        body:
+          apikey: "{{ porkbun_api_key }}"
+          secretapikey: "{{ porkbun_secret_key }}"
+          name: "{{ interactsh_subdomain }}"
+          type: NS
+          content: "{{ item }}.{{ interactsh_subdomain }}.{{ domain }}"
+          ttl: "300"
+      loop:
+        - ns1
+        - ns2
+      when: (item ~ '.' ~ interactsh_subdomain ~ '.' ~ domain) not in (porkbun_ns_existing.json.records | default([]) | map(attribute='content') | list)
+      tags: [interactsh, dns, webhook]
+
+    - name: Add server to runtime inventory
+      add_host:
+        name: "{{ server.hcloud_server.ipv4_address }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+
+    - name: Display setup complete
+      vars:
+        msg: |
+          Server: {{ server.hcloud_server.name }}
+          IP: {{ server.hcloud_server.ipv4_address }}
+          Domain: {{ subdomain }}.{{ domain }}
+          Volume: /mnt/persistent
+      debug:
+        msg: "{{ msg.split('\n') }}"
+
+# Configure CTF server software
+- name: Install CTF Shell Environment
+  hosts: ctf_servers
+  remote_user: root
+  become: yes
+  vars_files:
+    - vault.yaml
+    - config.local.yaml
+  pre_tasks:
+    - name: Determine public IPv4 address of server
+      command: curl -fsS https://ipv4.icanhazip.com
+      register: interactsh_public_ip_result
+      changed_when: false
+      tags: [always]
+
+    - name: Set interactsh_public_ip fact
+      set_fact:
+        interactsh_public_ip: "{{ interactsh_public_ip_result.stdout | trim }}"
+      tags: [always]
+  roles:
+    - role: system_setup
+    - role: scanner_block
+      tags: [scanner_block, firewall]
+    - role: ctf_tools
+    - role: interactsh
+      tags: [interactsh]
+    - role: interactsh_gui
+      tags: [interactsh, gui]
+    - role: webhook_site
+      tags: [webhook]
+    - role: dotfiles
+  post_tasks:
+    - name: Show connection commands
+      debug:
+        msg:
+          - "ssh: ssh {{ ctf_user }}@{{ subdomain }}.{{ domain }}"
+          - "interactsh: {{ interactsh_subdomain }}.{{ domain }} (run i on the server)"
+          - "gui: https://{{ subdomain }}.{{ domain }}"
+          - "webhook: https://wh.{{ domain }}"
+          - "syncthing: ssh -o sessiontype=none -o localforward=8385:127.0.0.1:8384 {{ ctf_user }}@{{ subdomain }}.{{ domain }}"
+          - "tokens (explicit request only): ssh -t {{ ctf_user }}@{{ subdomain }}.{{ domain }} sudo /usr/local/sbin/show-tokens"
+      tags: [always]

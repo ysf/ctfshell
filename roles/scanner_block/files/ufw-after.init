@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Managed by Ansible (role: scanner_block).
+#
+# UFW rebuilds the INPUT chain on every (re)load, which would drop our
+# scanner-block rules. This hook re-applies them whenever UFW starts or
+# reloads, so the blocklist survives `ufw reload` and `ufw enable`.
+#
+set -e
+
+case "$1" in
+  start|reload)
+    if [ -x /usr/local/sbin/scanner-block ]; then
+      /usr/local/sbin/scanner-block apply >/dev/null 2>&1 || true
+    fi
+    ;;
+  stop|flush-on-reload|status)
+    : ;;
+  *)
+    : ;;
+esac
+
+exit 0

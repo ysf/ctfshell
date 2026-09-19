@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore scanner blocklist ipset + firewall rules at boot
+After=ufw.service network-pre.target
+Before=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/scanner-block apply
+
+[Install]
+WantedBy=multi-user.target

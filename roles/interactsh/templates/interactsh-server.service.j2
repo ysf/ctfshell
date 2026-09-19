@@ -1,0 +1,32 @@
+[Unit]
+Description=Interactsh OOB Interaction Server
+Documentation=https://github.com/projectdiscovery/interactsh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=HOME=/root
+Environment=INTERACTSH_MAX_SHARED_INTERACTIONS=50000
+ExecStartPre=/usr/bin/mkdir -p /root/.config/interactsh-server
+ExecStart={{ interactsh_server_bin }} \
+    -domain {{ interactsh_domain }} \
+    -ip {{ interactsh_public_ip }} \
+    -listen-ip {{ interactsh_public_ip }} \
+    -http-port {{ interactsh_http_port }} \
+    -https-port {{ interactsh_https_port }} \
+    -token {{ vault_interactsh_token }} \
+    -http-index {{ interactsh_http_index_path }} \
+    -disable-version \
+    -wildcard \
+    -origin-ip-header X-Forwarded-For \
+    -disk \
+    -disk-path {{ interactsh_disk_path }}
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

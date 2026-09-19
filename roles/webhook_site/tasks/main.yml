@@ -1,0 +1,80 @@
+---
+- name: Install Docker + Compose
+  pacman:
+    name:
+      - docker
+      - docker-compose
+    state: present
+    update_cache: yes
+  retries: 3
+  delay: 5
+
+- name: Enable and start Docker
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: "Add {{ ctf_user }} user to docker group"
+  user:
+    name: "{{ ctf_user }}"
+    groups: docker
+    append: yes
+
+- name: Create webhook-site working directory
+  file:
+    path: "{{ webhook_site_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy custom nginx.conf (real_ip_header for X-Forwarded-For)
+  copy:
+    src: nginx.conf
+    dest: "{{ webhook_site_root }}/nginx.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart webhook-site
+
+- name: Deploy dark theme stylesheet
+  copy:
+    src: dark.css
+    dest: "{{ webhook_site_root }}/dark.css"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart webhook-site
+
+- name: Deploy docker-compose.yml
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ webhook_site_root }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart webhook-site
+
+- name: Pull container images
+  command: docker compose pull
+  args:
+    chdir: "{{ webhook_site_root }}"
+  register: compose_pull
+  changed_when: false
+
+- name: Deploy systemd unit
+  template:
+    src: webhook-site.service.j2
+    dest: /etc/systemd/system/webhook-site.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart webhook-site
+
+- name: Enable and start webhook-site stack
+  systemd:
+    name: webhook-site
+    enabled: yes
+    state: started
+    daemon_reload: yes

@@ -1,0 +1,6 @@
+---
+domain: example.com
+ctf_user: ctf
+ssh_key_name: ctf
+subdomain: ctf
+interactsh_subdomain: i

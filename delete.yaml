@@ -1,0 +1,40 @@
+---
+- hosts: localhost
+  vars_files:
+    - vault.yaml
+    - config.local.yaml
+  vars:
+    server_name: "ctfshell"
+
+  tasks:
+    - name: Confirm deletion
+      pause:
+        prompt: "Are you sure you want to DELETE the CTF server? This cannot be undone! (yes/no)"
+      register: confirm_delete
+
+    - name: Check confirmation
+      fail:
+        msg: "Deletion cancelled by user"
+      when: confirm_delete.user_input != "yes"
+    - name: Get server info before deletion
+      hetzner.hcloud.hcloud_server_info:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ server_name }}"
+      register: server_info
+      ignore_errors: true
+
+    - name: delete server
+      hetzner.hcloud.hcloud_server:
+        api_token: "{{ vault_ctfshell_hcloud_token }}"
+        name: "{{ server_name }}"
+        state: absent
+      register: delete_result
+
+    - name: Clean SSH known_hosts
+      shell: |
+        {% if server_info.hcloud_server_info | length > 0 %}
+        ssh-keygen -R {{ server_info.hcloud_server_info[0].ipv4_address }}
+        {% endif %}
+        ssh-keygen -R {{ subdomain }}.{{ domain }}
+      ignore_errors: true
+

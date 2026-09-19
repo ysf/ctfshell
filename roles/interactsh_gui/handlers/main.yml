@@ -1,0 +1,17 @@
+---
+- name: restart caddy
+  systemd:
+    name: caddy
+    state: restarted
+    daemon_reload: yes
+
+- name: reload caddy
+  systemd:
+    name: caddy
+    state: reloaded
+
+- name: restart interactsh-web
+  systemd:
+    name: interactsh-web
+    state: restarted
+    daemon_reload: yes

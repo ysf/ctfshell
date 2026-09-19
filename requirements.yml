@@ -1,0 +1,6 @@
+---
+collections:
+  - name: hetzner.hcloud
+  - name: sdorra.porkbun
+  - name: community.general
+  - name: ansible.posix

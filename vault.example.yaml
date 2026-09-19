@@ -1,0 +1,7 @@
+---
+vault_ctfshell_hcloud_token: "replace-me"
+porkbun_api_key: "replace-me"
+porkbun_secret_key: "replace-me"
+vault_interactsh_token: "replace-me"
+vault_interactsh_gui_user: ctf
+vault_interactsh_gui_password_hash: "replace-with-caddy-hash-password-output"

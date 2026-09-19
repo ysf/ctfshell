@@ -1,0 +1,64 @@
+---
+# Master switch for the whole role. Set to false (e.g. via
+# `-e scanner_block_enabled=false`) to tear the blocklist down again.
+scanner_block_enabled: true
+
+# If a kernel upgrade ran earlier in the play without a reboot, the ipset
+# hash:net module can't load on the stale running kernel. Reboot to fix it.
+# Set false to skip the reboot (apply will then fail until the host reboots).
+scanner_block_reboot_on_kernel_mismatch: true
+
+# ipset names (one set per address family).
+scanner_block_set_v4: scanners4
+scanner_block_set_v6: scanners6
+
+# Where the saved ipset dumps live (used for boot-restore without network).
+scanner_block_state_dir: /var/lib/scanner-block
+
+# Base URL of the MISP warninglists repo (raw). Lists are fetched live from here.
+scanner_block_base_url: "https://raw.githubusercontent.com/MISP/misp-warninglists/main/lists"
+
+# Automatic server-side refresh via systemd timer (`scanner-block update`).
+# Set scanner_block_auto_update to false to install without the timer.
+scanner_block_auto_update: true
+scanner_block_oncalendar: "weekly"
+scanner_block_randomized_delay: "6h"
+
+# IPs/CIDRs that must NEVER be blocked (admin/VPN/monitoring). Inserted as
+# ACCEPT rules above the DROP rules. Supports IPv4 and IPv6.
+scanner_block_allowlist: []
+
+# MISP warninglists to pull scanner ranges from. Trim this list to taste.
+# Discovered via the MISP/misp-warninglists tree (lists/<name>/list.json).
+scanner_block_lists:
+  - censys-scanning
+  - shodan-scanning
+  - shodan-nt-scanning
+  - onyphe-scanner
+  - onyphe-nt-scanning
+  - rapid7-nt-scanning
+  - stretchoid-nt-scanning
+  - shadowserver
+  - shadowserver-nt-scanning
+  - alphastrike-scanning
+  - alphastrike-research-nt-scanning
+  - modat-scanner
+  - modat-nt-scanning
+  - internet-census-nt-scanning
+  - internetcleanup-scanner
+  - bufferover-nt-scanning
+  - intrinsec-nt-scanning
+  - netsecscan-scanning
+  - netsecscan-nt-scanning
+  - research-scanner-nt-scanning
+  - probethenet-nt-scanning
+  - cybergreen-nt-scanning
+  - cyberresilience-nt-scanning
+  - coalition-signals-intelligence-nt-scanning
+  - cypex-nt-scanning
+  - f6-nt-scanning
+  - shadowforce-scanning
+  - shadowforce-nt-scanning
+  - skipa-nt-scanning
+  - ipinfo-nt-scanning
+  - ipip-nt-scanning

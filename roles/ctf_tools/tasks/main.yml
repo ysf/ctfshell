@@ -1,0 +1,69 @@
+---
+- name: Install CTF debugging tools
+  pacman:
+    name:
+      - gdb
+      - pwndbg
+      - rz-ghidra
+      - python-rzpipe
+      - radare2
+      - ropper
+      - r2ghidra
+      - python-r2pipe
+      - strace
+      - ltrace
+      - binutils
+      - nmap
+      - gnu-netcat
+      - socat
+      - wireshark-cli
+      - sshfs
+      - rsync
+    state: present
+
+- name: Install Python tools for CTF
+  pacman:
+    name:
+      - python-pwntools
+      - python-requests
+      - python-beautifulsoup4
+    state: present
+
+- name: Install additional Python tools via pacman
+  pacman:
+    name:
+      - python-capstone
+      - python-keystone
+      - python-unicorn
+    state: present
+
+- name: Install ropper via pip in user space
+  pip:
+    name: ropper
+    extra_args: --user --break-system-packages
+  become_user: "{{ ctf_user }}"
+
+- name: Create Binary Ninja debugger directory
+  file:
+    path: /opt/binja-debugger
+    state: directory
+    mode: '0755'
+
+- name: Deploy Binary Ninja debugger files
+  copy:
+    src: binja-debugger/
+    dest: /opt/binja-debugger/
+    mode: preserve
+  when: lookup("ansible.builtin.fileglob", role_path ~ "/files/binja-debugger/bin/debugger-cli") | length > 0
+
+- name: Make debugger binaries executable
+  file:
+    path: "{{ item }}"
+    mode: '0755'
+  with_items:
+    - /opt/binja-debugger/bin/debugger-cli
+    - /opt/binja-debugger/plugins/lldb/bin/lldb
+    - /opt/binja-debugger/plugins/lldb/bin/lldb-argdumper
+    - /opt/binja-debugger/plugins/lldb/bin/lldb-server
+  when: lookup("ansible.builtin.fileglob", role_path ~ "/files/binja-debugger/bin/debugger-cli") | length > 0
+

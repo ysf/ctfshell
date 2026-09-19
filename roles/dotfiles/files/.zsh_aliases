@@ -1,0 +1,16 @@
+alias edit-aliases="nvim ~/.zsh_aliases && source ~/.zsh_aliases"
+alias ls="ls -al --color=auto"
+alias cd..="cd .."
+alias ..="cd.."
+alias vi="nvim"
+alias vim="nvim"
+alias grep="grep --color=auto"
+alias fgrep="fgrep --color=auto"
+alias egrep="egrep --color=auto"
+
+alias gdb="gdb -q"
+alias strings="strings -a"
+
+alias pacman="sudo pacman"
+
+export PERSISTENT="/mnt/persistent"

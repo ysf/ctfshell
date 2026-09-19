@@ -1,0 +1,57 @@
+--- src/lib/index.ts.orig	2026-05-19 21:27:54.888555510 +0200
++++ src/lib/index.ts	2026-05-19 21:27:54.920795799 +0200
+@@ -40,6 +40,8 @@
+   error?: string;
+   aes_key: string;
+   data: string[];
++  tlddata?: string[];
++  extra?: string[];
+ }
+ 
+ export const decryptAESKey = (privateKey: string, aesKey: string): string => {
+@@ -87,6 +89,16 @@
+     }));
+   }
+ 
++  // Wildcard mode (-wildcard on server): root-domain interactions arrive
++  // unencrypted in tlddata/extra. Tag them so per-tab filters in page.tsx
++  // let them through regardless of the selected tab.
++  const unencryptedSources: string[] = [...(polledData.tlddata || []), ...(polledData.extra || [])];
++  for (const raw of unencryptedSources) {
++    try {
++      parsedData.push({ ...JSON.parse(raw), id: uuidv4(), _wildcard: true });
++    } catch (_) { /* skip malformed */ }
++  }
++
+   return parsedData;
+ };
+ 
+--- src/app/page.tsx.orig	2026-05-19 21:27:54.887043769 +0200
++++ src/app/page.tsx	2026-05-19 21:27:54.921038502 +0200
+@@ -206,7 +206,7 @@
+ 
+       setIsRegistered(true);
+       
+-      if (pollData?.data?.length > 0 && !pollData.error) {
++      if (((pollData?.data?.length || 0) > 0 || (pollData?.tlddata?.length || 0) > 0 || (pollData?.extra?.length || 0) > 0) && !pollData.error) {
+         if (pollData.aes_key) {
+           decryptedAESKey = decryptAESKey(privateKey, pollData.aes_key);
+         }
+@@ -243,7 +243,7 @@
+         });
+ 
+         const newData = combinedData
+-          .filter((item) => item['unique-id'] === dataFromLocalStorage.selectedTab['unique-id']);
++          .filter((item: any) => item['unique-id'] === dataFromLocalStorage.selectedTab['unique-id'] || item._wildcard);
+         filteredDataRef.current = newData;
+         setFilteredData(newData);
+       }
+@@ -353,7 +353,7 @@
+     }
+ 
+     const tempFilteredData = storedData.data
+-      .filter((item) => item['unique-id'] === storedData.selectedTab['unique-id']);
++      .filter((item: any) => item['unique-id'] === storedData.selectedTab['unique-id'] || item._wildcard);
+     filteredDataRef.current = tempFilteredData;
+     setFilteredData(tempFilteredData);
+ 

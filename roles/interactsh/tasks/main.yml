@@ -1,0 +1,171 @@
+---
+- name: Ensure /etc/resolv.conf points at systemd-resolved stub
+  file:
+    src: /run/systemd/resolve/stub-resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: yes
+  when: ansible_service_mgr == 'systemd'
+
+- name: Install Go toolchain and DNS debugging tools
+  pacman:
+    name:
+      - go
+      - bind
+    state: present
+
+- name: Ensure GOPATH bin directory exists
+  file:
+    path: "{{ interactsh_go_path }}/bin"
+    state: directory
+    owner: "{{ interactsh_user }}"
+    group: "{{ interactsh_user }}"
+    mode: '0755'
+
+- name: Mark /opt/interactsh-src safe for git (cross-user clone)
+  command: git config --global --add safe.directory /opt/interactsh-src
+  changed_when: false
+
+- name: Clone interactsh source for local patch+build
+  git:
+    repo: https://github.com/projectdiscovery/interactsh.git
+    dest: /opt/interactsh-src
+    version: v1.3.1
+    force: yes
+  register: interactsh_clone
+
+# Upstream bug: in RootTLD (-wildcard) branch the OriginIPHeader is not
+# honored because the local `host` is shadowed by net.SplitHostPort(r.RemoteAddr).
+# Patch makes both branches respect the OriginIPHeader so behind Caddy we get
+# the real client IP from X-Forwarded-For.
+- name: Apply OriginIPHeader fix to RootTLD branch
+  ansible.posix.patch:
+    src: origin-ip-header-roottld.patch
+    basedir: /opt/interactsh-src
+    strip: 0
+  when: interactsh_clone.changed
+
+- name: Build interactsh-client (patched)
+  command: go build -buildvcs=false -o "{{ interactsh_client_bin }}" ./cmd/interactsh-client
+  args:
+    chdir: /opt/interactsh-src
+  become_user: "{{ interactsh_user }}"
+  environment:
+    GOPATH: "{{ interactsh_go_path }}"
+    HOME: "/home/{{ interactsh_user }}"
+  when: interactsh_clone.changed
+
+- name: Build interactsh-server (patched)
+  command: go build -buildvcs=false -o "{{ interactsh_server_bin }}" ./cmd/interactsh-server
+  args:
+    chdir: /opt/interactsh-src
+  become_user: "{{ interactsh_user }}"
+  environment:
+    GOPATH: "{{ interactsh_go_path }}"
+    HOME: "/home/{{ interactsh_user }}"
+  when: interactsh_clone.changed
+  notify: restart interactsh-server
+
+- name: Symlink interactsh binaries into /usr/local/bin
+  file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: yes
+  loop:
+    - { src: "{{ interactsh_client_bin }}", dest: /usr/local/bin/interactsh-client }
+    - { src: "{{ interactsh_server_bin }}", dest: /usr/local/bin/interactsh-server }
+
+- name: Ensure interactsh disk storage directory exists
+  file:
+    path: "{{ interactsh_disk_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Ensure interactsh config directory exists
+  file:
+    path: "{{ interactsh_http_index_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# Custom HTTP index suppresses the default "Interactsh Server" landing page
+# on every domain (apex AND subdomains). interactsh-server treats an empty
+# file as "no custom index", so we ship a one-byte comment.
+- name: Deploy minimal HTTP index to suppress default landing page
+  copy:
+    content: "<!---->"
+    dest: "{{ interactsh_http_index_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart interactsh-server
+
+- name: Open firewall ports for interactsh-server
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop:
+    - { port: '53',  proto: 'udp' }
+    - { port: '53',  proto: 'tcp' }
+    - { port: '80',  proto: 'tcp' }
+    - { port: '443', proto: 'tcp' }
+    - { port: '25',  proto: 'tcp' }
+    - { port: '587', proto: 'tcp' }
+    - { port: '389', proto: 'tcp' }
+  ignore_errors: yes
+
+- name: Deploy interactsh-server systemd unit
+  template:
+    src: interactsh-server.service.j2
+    dest: /etc/systemd/system/interactsh-server.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart interactsh-server
+  no_log: true
+  diff: false
+
+- name: Enable and start interactsh-server
+  systemd:
+    name: interactsh-server
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Render interactsh-client convenience wrapper
+  copy:
+    dest: /usr/local/bin/i
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Convenience wrapper: interactsh-client against self-hosted server {{ interactsh_domain }}
+      exec /usr/local/bin/interactsh-client \
+          -server {{ interactsh_domain }} \
+          -token {{ vault_interactsh_token }} \
+          "$@"
+  no_log: true
+  diff: false
+
+- name: Install explicit token display command
+  copy:
+    dest: /usr/local/sbin/show-tokens
+    owner: root
+    group: root
+    mode: '0700'
+    content: |
+      #!/bin/sh
+      printf '%s\n' \
+        {{ ('interactsh server: ' ~ interactsh_domain) | quote }} \
+        {{ ('interactsh token: ' ~ vault_interactsh_token) | quote }} \
+        {{ ('gui user: ' ~ vault_interactsh_gui_user) | quote }} \
+        'gui password: the caddy password chosen before.'
+  no_log: true
+  diff: false
+  tags: [show_tokens]

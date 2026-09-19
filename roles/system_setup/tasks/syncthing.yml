@@ -1,0 +1,115 @@
+---
+- name: Create persistent Syncthing config directory
+  file:
+    path: /mnt/persistent/.config/syncthing
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+  tags: syncthing
+
+- name: Create user .config directory
+  file:
+    path: "/home/{{ ctf_user }}/.config"
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+
+- name: Enable and start Syncthing user service
+  systemd:
+    name: "syncthing@{{ ctf_user }}"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Check Syncthing service status
+  systemd:
+    name: "syncthing@{{ ctf_user }}"
+  register: syncthing_service
+
+- name: Show Syncthing service status
+  debug:
+    var: syncthing_service
+
+- name: Check Syncthing logs
+  command: "journalctl -u syncthing@{{ ctf_user }} --no-pager -n 20"
+  register: syncthing_logs
+
+- name: Show Syncthing logs
+  debug:
+    var: syncthing_logs.stdout_lines
+
+- name: Stop Syncthing to move config
+  systemd:
+    name: "syncthing@{{ ctf_user }}"
+    state: stopped
+
+- name: Check if persistent Syncthing config exists
+  stat:
+    path: /mnt/persistent/.config/syncthing/config.xml
+  register: persistent_config
+
+- name: Move Syncthing config to persistent storage
+  shell: |
+    if [ ! -f /mnt/persistent/.config/syncthing/config.xml ] && [ -d /home/{{ ctf_user }}/.local/state/syncthing ]; then
+      cp -r /home/{{ ctf_user }}/.local/state/syncthing/* /mnt/persistent/.config/syncthing/
+    fi
+  when: not persistent_config.stat.exists
+
+- name: Remove existing Syncthing directory
+  file:
+    path: "/home/{{ ctf_user }}/.local/state/syncthing"
+    state: absent
+
+- name: Create .local/state directory
+  file:
+    path: "/home/{{ ctf_user }}/.local/state"
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+
+- name: Symlink Syncthing config to persistent storage
+  file:
+    src: /mnt/persistent/.config/syncthing
+    dest: "/home/{{ ctf_user }}/.local/state/syncthing"
+    state: link
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    force: yes
+
+- name: Bind Syncthing GUI to loopback
+  replace:
+    path: "/home/{{ ctf_user }}/.local/state/syncthing/config.xml"
+    regexp: '(?s)(<gui\b[^>]*>.*?<address>)[^<]*(</address>)'
+    replace: '\g<1>127.0.0.1:8384\g<2>'
+
+- name: Start Syncthing with private GUI
+  systemd:
+    name: "syncthing@{{ ctf_user }}"
+    state: started
+
+- name: Create projects sync directory with proper ownership
+  file:
+    path: /mnt/persistent/projects
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+    recurse: yes
+
+- name: Get Syncthing device ID for pairing
+  command: "syncthing cli --home=\"/home/{{ ctf_user }}/.local/state/syncthing\" show system"
+  register: syncthing_system
+  retries: 5
+  delay: 2
+
+- name: Display Syncthing device ID
+  debug:
+    msg: "Remote Syncthing Device ID: {{ (syncthing_system.stdout | from_json).myID }}"
+
+- name: Set default folder path for auto-accepted folders
+  command: "syncthing cli --home=\"/home/{{ ctf_user }}/.local/state/syncthing\" config defaults folder path set \"/mnt/persistent/projects\""
+  retries: 3
+  delay: 2

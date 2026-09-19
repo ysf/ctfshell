@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh scanner blocklist from MISP warninglists
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/scanner-block update

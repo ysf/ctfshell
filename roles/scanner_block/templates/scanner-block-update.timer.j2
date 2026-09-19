@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic refresh of the scanner blocklist
+
+[Timer]
+OnCalendar={{ scanner_block_oncalendar }}
+Persistent=true
+RandomizedDelaySec={{ scanner_block_randomized_delay }}
+
+[Install]
+WantedBy=timers.target

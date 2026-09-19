@@ -1,0 +1,192 @@
+---
+- name: Check pacman processes
+  shell: ps aux | grep -v grep | grep pacman || true
+  register: pacman_processes
+  ignore_errors: yes
+
+- name: Show pacman processes
+  debug:
+    var: pacman_processes.stdout_lines
+
+- name: Check lock file existence
+  stat:
+    path: /var/lib/pacman/db.lck
+  register: lock_file
+
+- name: Show lock file status
+  debug:
+    var: lock_file
+
+- name: Update system packages
+  pacman:
+    update_cache: yes
+    upgrade: yes
+  retries: 3
+  delay: 10
+
+- name: Install base development tools
+  pacman:
+    name:
+      - base-devel
+      - git
+      - curl
+      - wget
+      - vim
+      - neovim
+      - nano
+      - htop
+      - tmux
+      - zsh
+      - ufw
+      - sudo
+      - fzf
+      - man-db
+      - man-pages
+      - bash-completion
+      - zsh-completions
+      - openvpn
+      - syncthing
+      - mosh
+      - ripgrep
+      - sysstat
+      - iotop
+      - nload
+      - nethogs
+      - tree
+      - lsof
+      - strace
+      - tcpdump
+      - iptables-nft
+      - unzip
+      - zoxide
+    state: present
+
+- name: Install Python and pip
+  pacman:
+    name:
+      - python
+      - ipython
+      - python-pip
+      - python-lsp-server
+      - pyright
+    state: present
+
+- name: "Create user {{ ctf_user }}"
+  user:
+    name: "{{ ctf_user }}"
+    groups: wheel
+    shell: /usr/bin/zsh
+    create_home: yes
+    state: present
+
+- name: Create ansible temp directory with correct permissions
+  file:
+    path: "/home/{{ ctf_user }}/.ansible/tmp"
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+
+- name: "Ensure {{ ctf_user }} .ssh directory exists"
+  file:
+    path: "/home/{{ ctf_user }}/.ssh"
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0700'
+
+- name: "Copy root's authorized_keys to {{ ctf_user }}"
+  copy:
+    src: /root/.ssh/authorized_keys
+    dest: "/home/{{ ctf_user }}/.ssh/authorized_keys"
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0600'
+    remote_src: yes
+
+- name: Set up passwordless sudo for wheel group
+  lineinfile:
+    path: /etc/sudoers
+    regexp: '^%wheel\s'
+    line: '%wheel ALL=(ALL) NOPASSWD: ALL'
+    backup: yes
+
+- name: Set timezone
+  timezone:
+    name: Europe/Amsterdam
+
+- name: Enable locales in locale.gen
+  lineinfile:
+    path: /etc/locale.gen
+    line: "{{ item }}"
+    create: yes
+  loop:
+    - "en_US.UTF-8 UTF-8"
+    - "en_IE.UTF-8 UTF-8"
+    - "de_DE.UTF-8 UTF-8"
+
+- name: Generate locales
+  locale_gen:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - en_US.UTF-8
+    - en_IE.UTF-8
+    - de_DE.UTF-8
+
+- name: Set system locale
+  lineinfile:
+    path: /etc/locale.conf
+    line: "{{ item }}"
+    create: yes
+  loop:
+    - "LANG=en_US.UTF-8"
+    - "LC_TIME=en_IE.UTF-8"
+
+
+- name: Allow SSH
+  ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+
+- name: Block direct access to Syncthing GUI
+  ufw:
+    rule: deny
+    port: '8384'
+    proto: tcp
+    direction: in
+    insert: 1
+
+- name: Enable UFW with default deny
+  ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+- name: Allow mosh
+  ufw:
+    rule: allow
+    port: '60000:61000'
+    proto: udp
+
+- name: Create user directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+  loop:
+    - "/home/{{ ctf_user }}/tools"
+    - "/home/{{ ctf_user }}/.config"
+    - "/home/{{ ctf_user }}/binaries"
+    - /mnt/persistent/shared
+    - /mnt/persistent/projects
+    - /mnt/persistent/.config
+    - /mnt/persistent/.config/zsh
+
+- include_tasks: vpn.yml
+
+- include_tasks: syncthing.yml
+  tags: syncthing

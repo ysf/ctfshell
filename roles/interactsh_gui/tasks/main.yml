@@ -1,0 +1,120 @@
+---
+- name: Install build/runtime dependencies (Node.js for interactsh-web)
+  pacman:
+    name:
+      - nodejs
+      - npm
+      - git
+    state: present
+    update_cache: yes
+  retries: 3
+  delay: 5
+
+- name: Download Caddy custom build with layer4 plugin
+  get_url:
+    url: 'https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/mholt/caddy-l4'
+    dest: /usr/local/bin/caddy
+    mode: '0755'
+    force: yes
+  notify: restart caddy
+
+- name: Create caddy config directory
+  file:
+    path: /etc/caddy
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Clone interactsh-web repository
+  git:
+    repo: "{{ interactsh_gui_repo }}"
+    dest: "{{ interactsh_gui_src }}"
+    version: main
+    force: yes
+  register: gui_clone
+
+# interactsh-web's processData() only renders pollData.data (encrypted client
+# subdomain interactions) and ignores tlddata/extra. With -wildcard on the
+# server, root-domain & shared-buffer hits arrive in tlddata/extra unencrypted
+# — this patch merges them into the displayed list.
+- name: Apply wildcard-mode patch to interactsh-web
+  ansible.posix.patch:
+    src: wildcard-mode.patch
+    basedir: "{{ interactsh_gui_src }}"
+    strip: 0
+  when: gui_clone.changed
+
+- name: Install npm dependencies for interactsh-web
+  command: npm install --force --no-audit --no-fund
+  args:
+    chdir: "{{ interactsh_gui_src }}"
+  when: gui_clone.changed
+  environment:
+    CI: "true"
+
+- name: Build interactsh-web (Next.js standalone)
+  command: npm run build
+  args:
+    chdir: "{{ interactsh_gui_src }}"
+  when: gui_clone.changed
+  environment:
+    CI: "true"
+
+# Next.js `output: 'standalone'` puts a minimal node server at
+# .next/standalone/server.js but expects .next/static/ and public/ alongside it.
+- name: Assemble standalone runtime directory
+  shell: |
+    set -e
+    rm -rf {{ interactsh_gui_root }}
+    mkdir -p {{ interactsh_gui_root }}
+    cp -a {{ interactsh_gui_src }}/.next/standalone/. {{ interactsh_gui_root }}/
+    mkdir -p {{ interactsh_gui_root }}/.next
+    cp -a {{ interactsh_gui_src }}/.next/static {{ interactsh_gui_root }}/.next/static
+    if [ -d {{ interactsh_gui_src }}/public ]; then
+        cp -a {{ interactsh_gui_src }}/public {{ interactsh_gui_root }}/public
+    fi
+  when: gui_clone.changed
+  notify: restart interactsh-web
+
+- name: Deploy interactsh-web systemd unit
+  template:
+    src: interactsh-web.service.j2
+    dest: /etc/systemd/system/interactsh-web.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart interactsh-web
+
+- name: Enable and start interactsh-web
+  systemd:
+    name: interactsh-web
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Deploy Caddy JSON config
+  template:
+    src: caddy.json.j2
+    dest: /etc/caddy/caddy.json
+    owner: root
+    group: root
+    mode: '0644'
+    validate: '/usr/local/bin/caddy validate --config %s'
+  notify: reload caddy
+
+- name: Deploy Caddy systemd unit
+  template:
+    src: caddy.service.j2
+    dest: /etc/systemd/system/caddy.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart caddy
+
+- name: Enable and start Caddy
+  systemd:
+    name: caddy
+    enabled: yes
+    state: started
+    daemon_reload: yes

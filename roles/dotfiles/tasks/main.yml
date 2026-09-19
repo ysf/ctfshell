@@ -1,0 +1,40 @@
+---
+- name: Create zsh history file
+  file:
+    path: /mnt/persistent/.config/zsh/.zsh_history
+    state: touch
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0600'
+
+- name: Copy dotfiles
+  copy:
+    src: files/
+    dest: "/home/{{ ctf_user }}/"
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: preserve
+
+- name: Clone pure prompt manually
+  git:
+    repo: https://github.com/sindresorhus/pure.git
+    dest: "/home/{{ ctf_user }}/.config/zsh/pure"
+    depth: 1
+  become_user: "{{ ctf_user }}"
+
+- name: Install tmux plugin manager
+  git:
+    repo: https://github.com/tmux-plugins/tpm.git
+    dest: "/home/{{ ctf_user }}/.config/tmux/plugins/tpm"
+    depth: 1
+  become_user: "{{ ctf_user }}"
+
+- name: Install configured tmux plugins
+  command: "/home/{{ ctf_user }}/.config/tmux/plugins/tpm/bin/install_plugins"
+  become_user: "{{ ctf_user }}"
+  environment:
+    HOME: "/home/{{ ctf_user }}"
+    XDG_CONFIG_HOME: "/home/{{ ctf_user }}/.config"
+    TMUX_PLUGIN_MANAGER_PATH: "/home/{{ ctf_user }}/.config/tmux/plugins"
+  register: tmux_plugins_install
+  changed_when: "'download success' in tmux_plugins_install.stdout"

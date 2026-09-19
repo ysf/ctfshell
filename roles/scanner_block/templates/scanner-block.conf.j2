@@ -1,0 +1,18 @@
+# Managed by Ansible (role: scanner_block) — do not edit by hand.
+SET4="{{ scanner_block_set_v4 }}"
+SET6="{{ scanner_block_set_v6 }}"
+STATE_DIR="{{ scanner_block_state_dir }}"
+BASE_URL="{{ scanner_block_base_url }}"
+
+# Lists used by `scanner-block update` (server-side refresh).
+LISTS=(
+{% for l in scanner_block_lists %}
+  "{{ l }}"
+{% endfor %}
+)
+
+ALLOWLIST=(
+{% for ip in scanner_block_allowlist %}
+  "{{ ip }}"
+{% endfor %}
+)

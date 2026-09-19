@@ -1,0 +1,5 @@
+---
+- name: restart syncthing
+  systemd:
+    name: "syncthing@{{ ctf_user }}"
+    state: restarted

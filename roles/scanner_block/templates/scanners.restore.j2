@@ -1,0 +1,19 @@
+{# Managed by Ansible (role: scanner_block). Generated from MISP warninglists
+   fetched on the control node at deploy time. Loaded via `ipset restore`.
+   Built {{ scanner_block_v4 | length }} IPv4 + {{ scanner_block_v6 | length }} IPv6 entries. #}
+create {{ scanner_block_set_v4 }}_tmp hash:net family inet maxelem 1048576 -exist
+flush {{ scanner_block_set_v4 }}_tmp
+{% for cidr in scanner_block_v4 %}
+add {{ scanner_block_set_v4 }}_tmp {{ cidr }} -exist
+{% endfor %}
+create {{ scanner_block_set_v4 }} hash:net family inet maxelem 1048576 -exist
+swap {{ scanner_block_set_v4 }}_tmp {{ scanner_block_set_v4 }}
+destroy {{ scanner_block_set_v4 }}_tmp
+create {{ scanner_block_set_v6 }}_tmp hash:net family inet6 maxelem 1048576 -exist
+flush {{ scanner_block_set_v6 }}_tmp
+{% for cidr in scanner_block_v6 %}
+add {{ scanner_block_set_v6 }}_tmp {{ cidr }} -exist
+{% endfor %}
+create {{ scanner_block_set_v6 }} hash:net family inet6 maxelem 1048576 -exist
+swap {{ scanner_block_set_v6 }}_tmp {{ scanner_block_set_v6 }}
+destroy {{ scanner_block_set_v6 }}_tmp

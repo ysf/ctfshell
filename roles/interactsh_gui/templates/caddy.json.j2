@@ -1,0 +1,213 @@
+{
+  "apps": {
+    "layer4": {
+      "servers": {
+        "main": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "match": [
+                { "tls": { "sni": ["*.{{ interactsh_domain }}", "*.*.{{ interactsh_domain }}", "*.*.*.{{ interactsh_domain }}", "*.*.*.*.{{ interactsh_domain }}", "*.*.*.*.*.{{ interactsh_domain }}"] } }
+              ],
+              "handle": [
+                {
+                  "handler": "proxy",
+                  "upstreams": [ { "dial": ["{{ interactsh_public_ip }}:{{ interactsh_https_port }}"] } ]
+                }
+              ]
+            },
+            {
+              "match": [
+                { "tls": { "sni": ["{{ interactsh_domain }}"] } }
+              ],
+              "handle": [
+                {
+                  "handler": "proxy",
+                  "upstreams": [ { "dial": ["127.0.0.1:9444"] } ]
+                }
+              ]
+            },
+            {
+              "match": [
+                { "tls": { "sni": ["{{ interactsh_gui_domain }}"] } }
+              ],
+              "handle": [
+                {
+                  "handler": "proxy",
+                  "upstreams": [ { "dial": ["127.0.0.1:9443"] } ]
+                }
+              ]
+            },
+            {
+              "match": [
+                { "tls": { "sni": ["{{ webhook_site_domain }}"] } }
+              ],
+              "handle": [
+                {
+                  "handler": "proxy",
+                  "upstreams": [ { "dial": ["127.0.0.1:9445"] } ],
+                  "proxy_protocol": "v2"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "http": {
+      "servers": {
+        "http_router": {
+          "listen": [":80"],
+          "automatic_https": { "disable_redirects": true },
+          "routes": [
+            {
+              "match": [ { "host": ["{{ interactsh_gui_domain }}"] } ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "headers": { "Location": ["https://{{ interactsh_gui_domain }}{http.request.uri}"] },
+                  "status_code": 308
+                }
+              ]
+            },
+            {
+              "match": [ { "host": ["{{ webhook_site_domain }}"] } ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "headers": { "Location": ["https://{{ webhook_site_domain }}{http.request.uri}"] },
+                  "status_code": 308
+                }
+              ]
+            },
+            {
+              "match": [ { "host": ["{{ interactsh_domain }}"], "path": ["/"] } ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 404,
+                  "body": ""
+                }
+              ]
+            },
+            {
+              "match": [ { "host": ["*.{{ interactsh_domain }}", "*.*.{{ interactsh_domain }}", "*.*.*.{{ interactsh_domain }}", "*.*.*.*.{{ interactsh_domain }}", "*.*.*.*.*.{{ interactsh_domain }}", "{{ interactsh_domain }}"] } ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "headers": {
+                    "request": {
+                      "set": { "X-Forwarded-For": ["{http.request.remote.host}"] }
+                    }
+                  },
+                  "upstreams": [ { "dial": "{{ interactsh_public_ip }}:{{ interactsh_http_port }}" } ]
+                }
+              ]
+            }
+          ]
+        },
+        "gui_https": {
+          "listen": ["127.0.0.1:9443"],
+          "routes": [
+            {
+              "match": [ { "host": ["{{ interactsh_gui_domain }}"] } ],
+              "handle": [
+                {
+                  "handler": "authentication",
+                  "providers": {
+                    "http_basic": {
+                      "hash": { "algorithm": "bcrypt" },
+                      "accounts": [
+                        {
+                          "username": "{{ vault_interactsh_gui_user }}",
+                          "password": "{{ vault_interactsh_gui_password_hash }}"
+                        }
+                      ],
+                      "realm": "ctfshell"
+                    }
+                  }
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [ { "dial": "127.0.0.1:3000" } ]
+                }
+              ]
+            }
+          ],
+          "tls_connection_policies": [
+            { "match": { "sni": ["{{ interactsh_gui_domain }}"] } }
+          ]
+        },
+        "wh_https": {
+          "listen": ["127.0.0.1:9445"],
+          "listener_wrappers": [
+            { "wrapper": "proxy_protocol", "allow": ["127.0.0.1/32"] },
+            { "wrapper": "tls" }
+          ],
+          "routes": [
+            {
+              "match": [ { "host": ["{{ webhook_site_domain }}"] } ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [ { "dial": "{{ webhook_site_upstream }}" } ]
+                }
+              ]
+            }
+          ],
+          "tls_connection_policies": [
+            { "match": { "sni": ["{{ webhook_site_domain }}"] } }
+          ]
+        },
+        "apex_https": {
+          "listen": ["127.0.0.1:9444"],
+          "routes": [
+            {
+              "match": [ { "host": ["{{ interactsh_domain }}"], "path": ["/"] } ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 404,
+                  "body": ""
+                }
+              ]
+            },
+            {
+              "match": [ { "host": ["{{ interactsh_domain }}"] } ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "Host": ["{{ interactsh_domain }}"],
+                        "X-Forwarded-For": ["{http.request.remote.host}"]
+                      }
+                    }
+                  },
+                  "upstreams": [ { "dial": "{{ interactsh_public_ip }}:{{ interactsh_http_port }}" } ]
+                }
+              ]
+            }
+          ],
+          "tls_connection_policies": [
+            { "match": { "sni": ["{{ interactsh_domain }}"] } }
+          ],
+          "automatic_https": { "disable_redirects": true }
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["{{ interactsh_gui_domain }}", "{{ interactsh_domain }}", "{{ webhook_site_domain }}"],
+            "issuers": [
+              { "module": "acme" }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

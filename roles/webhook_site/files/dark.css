@@ -1,0 +1,122 @@
+/*
+ * Dark theme for self-hosted webhook.site.
+ * Aggressive overrides on Bootstrap 3 selectors.
+ */
+:root {
+    --bg: #0b0d10;
+    --bg-soft: #14171c;
+    --bg-elev: #1d2127;
+    --border: #2a2f37;
+    --fg: #d6d9de;
+    --fg-muted: #8a9099;
+    --accent: #5b8def;
+    --code-bg: #0e1116;
+    --danger: #ff5c64;
+    --success: #4eb888;
+    --warning: #d4a544;
+}
+
+html, body { background: var(--bg) !important; color: var(--fg) !important; }
+a { color: var(--accent) !important; }
+a:hover { color: #8aabff !important; }
+
+/* navigation / header bar */
+.navbar, .navbar-default, .navbar-inverse, header, .header {
+    background: var(--bg-soft) !important;
+    border-color: var(--border) !important;
+    color: var(--fg) !important;
+}
+.navbar-brand, .navbar-nav > li > a { color: var(--fg) !important; }
+
+/* panels, wells, modal, dropdown */
+.panel, .panel-default, .panel-body, .panel-heading,
+.well, .modal-content, .dropdown-menu, .card {
+    background: var(--bg-soft) !important;
+    color: var(--fg) !important;
+    border-color: var(--border) !important;
+}
+.panel-heading, .modal-header, .modal-footer { background: var(--bg-elev) !important; }
+
+/* tables */
+.table, .table > thead > tr > th, .table > tbody > tr > td, .table > tbody > tr > th {
+    background: var(--bg-soft) !important;
+    color: var(--fg) !important;
+    border-color: var(--border) !important;
+}
+.table-striped > tbody > tr:nth-of-type(odd),
+.table-hover > tbody > tr:hover {
+    background: var(--bg-elev) !important;
+}
+
+/* forms */
+input, textarea, select, .form-control {
+    background: var(--bg-elev) !important;
+    color: var(--fg) !important;
+    border-color: var(--border) !important;
+}
+input::placeholder, textarea::placeholder { color: var(--fg-muted) !important; }
+.input-group-addon, .input-group-btn > .btn { background: var(--bg-elev) !important; color: var(--fg) !important; border-color: var(--border) !important; }
+
+/* buttons */
+.btn { border-color: var(--border) !important; }
+.btn-default { background: var(--bg-elev) !important; color: var(--fg) !important; }
+.btn-default:hover { background: var(--border) !important; }
+.btn-primary { background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important; }
+.btn-danger { background: var(--danger) !important; border-color: var(--danger) !important; color: #fff !important; }
+.btn-success { background: var(--success) !important; border-color: var(--success) !important; color: #fff !important; }
+
+/* code/pre blocks (request body shown by webhook.site) */
+pre, code, .CodeMirror, .ace_editor, .hljs {
+    background: var(--code-bg) !important;
+    color: var(--fg) !important;
+    border-color: var(--border) !important;
+}
+
+/* alerts */
+.alert { border-color: var(--border) !important; }
+.alert-info { background: rgba(91,141,239,0.15) !important; color: var(--fg) !important; }
+.alert-warning { background: rgba(212,165,68,0.15) !important; color: var(--fg) !important; }
+.alert-danger { background: rgba(255,92,100,0.15) !important; color: var(--fg) !important; }
+.alert-success { background: rgba(78,184,136,0.15) !important; color: var(--fg) !important; }
+
+/* sidebars / lists */
+.list-group-item, .nav-pills > li > a, .nav-tabs > li > a {
+    background: var(--bg-soft) !important;
+    color: var(--fg) !important;
+    border-color: var(--border) !important;
+}
+.list-group-item.active, .nav-pills > li.active > a, .nav-tabs > li.active > a {
+    background: var(--accent) !important;
+    color: #fff !important;
+    border-color: var(--accent) !important;
+}
+
+/* labels, badges */
+.label, .badge { background: var(--bg-elev) !important; color: var(--fg) !important; }
+
+/* webhook.site specific containers */
+.sidebar { background: var(--bg-soft) !important; border-color: var(--border) !important; }
+.sidebar ul, .sidebar ul li { background: transparent !important; }
+li.unread, li.ng-scope.unread {
+    background: var(--bg-elev) !important;
+    border-left: 3px solid var(--accent) !important;
+}
+li.unread:hover { background: var(--border) !important; }
+#tutorial, .tutorial {
+    background: var(--bg-soft) !important;
+    color: var(--fg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 4px;
+}
+#tutorial a { color: var(--accent) !important; }
+
+/* webhook.site request-detail header */
+.copy-button, .url-bookmark, .new-bookmark { background: var(--bg-elev) !important; color: var(--fg) !important; }
+
+/* misc */
+hr { border-color: var(--border) !important; }
+.text-muted { color: var(--fg-muted) !important; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }

@@ -1,0 +1,6 @@
+---
+webhook_site_domain: "wh.{{ domain }}"
+webhook_site_root: /opt/webhook-site
+# Host-side bound port that Caddy reverse-proxies to.
+webhook_site_http_port: 8084
+webhook_site_upstream: "127.0.0.1:{{ webhook_site_http_port }}"

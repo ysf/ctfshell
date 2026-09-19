@@ -1,0 +1,44 @@
+---
+- name: Create VPN config directory
+  file:
+    path: "{{ ansible_env.HOME }}/.config/vpn"
+    state: directory
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0700'
+
+- name: Check if VPN config exists locally
+  stat:
+    path: "{{ playbook_dir }}/roles/vpn/files/tryhackme.ovpn"
+  delegate_to: localhost
+  become: no
+  register: vpn_config
+
+- name: Copy VPN config if it exists
+  copy:
+    src: "{{ playbook_dir }}/roles/vpn/files/tryhackme.ovpn"
+    dest: "{{ ansible_env.HOME }}/.config/vpn/tryhackme.ovpn"
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0600'
+  when: vpn_config.stat.exists
+
+- name: Create VPN start script
+  copy:
+    content: |
+      #!/bin/bash
+      sudo openvpn --config {{ ansible_env.HOME }}/.config/vpn/tryhackme.ovpn --daemon
+    dest: "/home/{{ ctf_user }}/tools/thm-start.sh"
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'
+
+- name: Create VPN stop script
+  copy:
+    content: |
+      #!/bin/bash
+      sudo pkill -f openvpn
+    dest: "/home/{{ ctf_user }}/tools/thm-stop.sh"
+    owner: "{{ ctf_user }}"
+    group: "{{ ctf_user }}"
+    mode: '0755'

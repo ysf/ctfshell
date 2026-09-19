@@ -1,0 +1,217 @@
+---
+# ---------------------------------------------------------------------------
+# scanner_block — block internet mass-scanner IPs (Censys, Shodan, ...).
+# Lists are fetched + aggregated on the CONTROL NODE at deploy time and shipped
+# to the host as an ipset restore file. The server never touches the network.
+# Toggle with: -e scanner_block_enabled=false  (and --tags scanner_block)
+# ---------------------------------------------------------------------------
+
+- name: Install ipset + jq (jq is used by `scanner-block update`)
+  pacman:
+    name:
+      - ipset
+      - jq
+    state: present
+  when: scanner_block_enabled | bool
+
+# --- kernel module sanity --------------------------------------------------
+# A `pacman -Syu` earlier in the play may have upgraded the kernel without a
+# reboot. The running kernel's module dir is then gone, so ipset's hash:net
+# type module cannot be loaded ("set type not supported"). Reboot to fix it.
+- name: Check whether modules for the running kernel are present
+  command: test -d "/usr/lib/modules/$(uname -r)"
+  register: sb_kmod_dir
+  changed_when: false
+  failed_when: false
+  when: scanner_block_enabled | bool
+
+- name: Reboot to activate freshly upgraded kernel (ipset modules missing)
+  reboot:
+    reboot_timeout: 300
+    msg: "scanner_block: reboot to load matching kernel modules"
+  when:
+    - scanner_block_enabled | bool
+    - scanner_block_reboot_on_kernel_mismatch | bool
+    - sb_kmod_dir.rc | default(0) != 0
+
+- name: Load ipset kernel modules on boot
+  copy:
+    dest: /etc/modules-load.d/scanner-block.conf
+    content: |
+      ip_set
+      ip_set_hash_net
+      xt_set
+    mode: '0644'
+  when: scanner_block_enabled | bool
+
+- name: Load ipset kernel modules now
+  command: "modprobe {{ item }}"
+  loop:
+    - ip_set
+    - ip_set_hash_net
+    - xt_set
+  changed_when: false
+  when: scanner_block_enabled | bool
+
+# --- fetch + aggregate on the control node ---------------------------------
+- name: Fetch scanner lists from MISP warninglists (on control node)
+  ansible.builtin.uri:
+    url: "{{ scanner_block_base_url }}/{{ item }}/list.json"
+    return_content: yes
+    timeout: 30
+  loop: "{{ scanner_block_lists }}"
+  delegate_to: localhost
+  become: false
+  register: sb_fetched
+  failed_when: false
+  when: scanner_block_enabled | bool
+
+- name: Aggregate, dedupe and split scanner ranges by address family
+  set_fact:
+    scanner_block_v4: >-
+      {{ sb_fetched.results
+         | selectattr('status', 'defined') | selectattr('status', 'equalto', 200)
+         | map(attribute='content') | map('from_json')
+         | selectattr('list', 'defined') | map(attribute='list')
+         | flatten | unique | reject('search', ':') | list }}
+    scanner_block_v6: >-
+      {{ sb_fetched.results
+         | selectattr('status', 'defined') | selectattr('status', 'equalto', 200)
+         | map(attribute='content') | map('from_json')
+         | selectattr('list', 'defined') | map(attribute='list')
+         | flatten | unique | select('search', ':') | list }}
+  when: scanner_block_enabled | bool
+
+- name: Report aggregated counts
+  debug:
+    msg: >-
+      scanner-block: {{ scanner_block_v4 | length }} IPv4 + {{ scanner_block_v6 | length }} IPv6 ranges
+      from {{ sb_fetched.results | selectattr('status', 'equalto', 200) | list | length }}/{{ scanner_block_lists | length }} lists
+  when: scanner_block_enabled | bool
+
+- name: Fail if no scanner ranges were fetched
+  fail:
+    msg: "scanner-block: aggregation produced 0 ranges — refusing to ship an empty blocklist."
+  when:
+    - scanner_block_enabled | bool
+    - (scanner_block_v4 | length + scanner_block_v6 | length) == 0
+
+# --- ship to the host ------------------------------------------------------
+- name: Create scanner-block directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /etc/scanner-block
+    - "{{ scanner_block_state_dir }}"
+  when: scanner_block_enabled | bool
+
+- name: Deploy scanner-block config
+  template:
+    src: scanner-block.conf.j2
+    dest: /etc/scanner-block/config
+    mode: '0644'
+  when: scanner_block_enabled | bool
+
+- name: Deploy scanner-block control script
+  copy:
+    src: scanner-block
+    dest: /usr/local/sbin/scanner-block
+    mode: '0755'
+  when: scanner_block_enabled | bool
+
+- name: Ship aggregated ipset restore file
+  template:
+    src: scanners.restore.j2
+    dest: "{{ scanner_block_state_dir }}/scanners.restore"
+    mode: '0600'
+  when: scanner_block_enabled | bool
+
+- name: Deploy boot-restore service
+  template:
+    src: scanner-block-restore.service.j2
+    dest: /etc/systemd/system/scanner-block-restore.service
+    mode: '0644'
+  notify: reload systemd
+  when: scanner_block_enabled | bool
+
+- name: Deploy UFW after.init hook (re-apply on ufw reload)
+  copy:
+    src: ufw-after.init
+    dest: /etc/ufw/after.init
+    mode: '0755'
+  when: scanner_block_enabled | bool
+
+- name: Deploy weekly update timer units
+  template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop:
+    - scanner-block-update.service
+    - scanner-block-update.timer
+  notify: reload systemd
+  when: scanner_block_enabled | bool and scanner_block_auto_update | bool
+
+- name: Enable boot-restore service
+  systemd:
+    name: scanner-block-restore.service
+    enabled: yes
+    daemon_reload: yes
+  when: scanner_block_enabled | bool
+
+- name: Enable + start weekly update timer
+  systemd:
+    name: scanner-block-update.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  when: scanner_block_enabled | bool and scanner_block_auto_update | bool
+
+- name: Disable update timer when auto-update is off
+  systemd:
+    name: scanner-block-update.timer
+    enabled: no
+    state: stopped
+  failed_when: false
+  when: scanner_block_enabled | bool and not (scanner_block_auto_update | bool)
+
+- name: Ensure blocklist is applied now
+  command: /usr/local/sbin/scanner-block apply
+  register: sb_apply
+  changed_when: "'applied:' in sb_apply.stdout"
+  when: scanner_block_enabled | bool
+
+- name: Show scanner-block status
+  debug:
+    var: sb_apply.stdout_lines
+  when: scanner_block_enabled | bool and (sb_apply is not skipped)
+
+# --- teardown when disabled ------------------------------------------------
+- name: Stop + disable update timer (disabled)
+  systemd:
+    name: scanner-block-update.timer
+    enabled: no
+    state: stopped
+  failed_when: false
+  when: not (scanner_block_enabled | bool)
+
+- name: Tear down scanner-block (disabled)
+  command: /usr/local/sbin/scanner-block off
+  failed_when: false
+  changed_when: true
+  when: not (scanner_block_enabled | bool)
+
+- name: Remove scanner-block files (disabled)
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/scanner-block-restore.service
+    - /etc/systemd/system/scanner-block-update.service
+    - /etc/systemd/system/scanner-block-update.timer
+    - /etc/ufw/after.init
+    - "{{ scanner_block_state_dir }}/scanners.restore"
+  notify: reload systemd
+  when: not (scanner_block_enabled | bool)

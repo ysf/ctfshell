@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# scanner-block — block internet mass-scanner source IPs (Censys, Shodan, Onyphe,
+# Rapid7, Stretchoid, Shadowserver, ...) via ipset + iptables-nft.
+#
+# The IP ranges are normally fetched + aggregated by Ansible on the control node
+# at deploy time and shipped here as an ipset restore file. `apply` just loads
+# that file (no network). `update` additionally lets this host refresh the
+# ranges itself, straight from the MISP warninglists (needs curl + jq).
+#
+# Managed by Ansible (role: scanner_block). Config: /etc/scanner-block/config.
+#
+# Usage: scanner-block {on|off|update|apply|status|rules}
+#   on      enable boot-restore and apply the shipped sets + rules
+#   off     remove firewall rules + ipsets and disable boot-restore
+#   update  fetch fresh lists from MISP, rebuild + persist sets, ensure rules
+#   apply   load the persisted ipset restore file and ensure rules (no network)
+#   status  show ipset counts and firewall rule state
+#   rules   (re-)insert the firewall rules only
+#
+set -euo pipefail
+
+CONFIG="${SCANNER_BLOCK_CONFIG:-/etc/scanner-block/config}"
+# shellcheck disable=SC1090
+[ -r "$CONFIG" ] && . "$CONFIG"
+
+: "${SET4:=scanners4}"
+: "${SET6:=scanners6}"
+: "${STATE_DIR:=/var/lib/scanner-block}"
+: "${BASE_URL:=https://raw.githubusercontent.com/MISP/misp-warninglists/main/lists}"
+RESTORE_FILE="$STATE_DIR/scanners.restore"
+declare -p ALLOWLIST >/dev/null 2>&1 || ALLOWLIST=()
+declare -p LISTS     >/dev/null 2>&1 || LISTS=()
+
+log() { echo "[scanner-block] $*"; }
+
+ensure_sets() {
+  ipset create "$SET4" hash:net family inet  maxelem 1048576 -exist
+  ipset create "$SET6" hash:net family inet6 maxelem 1048576 -exist
+}
+
+ensure_rules() {
+  ensure_sets
+  # DROP packets whose source is in the scanner sets. -I inserts at the top of
+  # INPUT, i.e. before UFW's jump, so scanners never reach the allowed services.
+  iptables  -C INPUT -m set --match-set "$SET4" src -j DROP 2>/dev/null \
+    || iptables  -I INPUT -m set --match-set "$SET4" src -j DROP
+  ip6tables -C INPUT -m set --match-set "$SET6" src -j DROP 2>/dev/null \
+    || ip6tables -I INPUT -m set --match-set "$SET6" src -j DROP
+  # Allowlist ACCEPTs are inserted at position 1, i.e. above the DROP rules.
+  local ip
+  for ip in "${ALLOWLIST[@]}"; do
+    [ -z "$ip" ] && continue
+    if [[ "$ip" == *:* ]]; then
+      ip6tables -C INPUT -s "$ip" -j ACCEPT 2>/dev/null || ip6tables -I INPUT 1 -s "$ip" -j ACCEPT
+    else
+      iptables  -C INPUT -s "$ip" -j ACCEPT 2>/dev/null || iptables  -I INPUT 1 -s "$ip" -j ACCEPT
+    fi
+  done
+}
+
+remove_rules() {
+  while iptables  -C INPUT -m set --match-set "$SET4" src -j DROP 2>/dev/null; do
+    iptables  -D INPUT -m set --match-set "$SET4" src -j DROP
+  done
+  while ip6tables -C INPUT -m set --match-set "$SET6" src -j DROP 2>/dev/null; do
+    ip6tables -D INPUT -m set --match-set "$SET6" src -j DROP
+  done
+}
+
+apply() {
+  if [ -f "$RESTORE_FILE" ]; then
+    # The restore file builds temp sets and atomically swaps them in, so the
+    # live sets are never empty mid-load even while the DROP rule is active.
+    ipset restore < "$RESTORE_FILE"
+  else
+    log "WARN no restore file at $RESTORE_FILE; using empty sets"
+    ensure_sets
+  fi
+  ensure_rules
+  log "applied: $(ipset list "$SET4" -t 2>/dev/null | awk '/Number of entries/{print $NF}') IPv4 + $(ipset list "$SET6" -t 2>/dev/null | awk '/Number of entries/{print $NF}') IPv6 entries"
+}
+
+# Refresh the ranges from MISP directly on this host (needs curl + jq), rebuild
+# the restore file and load it. Same on-disk format as the Ansible-shipped file.
+update() {
+  command -v curl >/dev/null 2>&1 || { log "ERROR curl not installed"; exit 1; }
+  command -v jq   >/dev/null 2>&1 || { log "ERROR jq not installed"; exit 1; }
+  [ "${#LISTS[@]}" -gt 0 ] || { log "ERROR no LISTS configured in $CONFIG"; exit 1; }
+
+  local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  : > "$tmp/all.txt"
+  local name url fails=0 got=0
+  for name in "${LISTS[@]}"; do
+    [ -z "$name" ] && continue
+    url="$BASE_URL/$name/list.json"
+    if curl -fsS --max-time 30 "$url" -o "$tmp/l.json"; then
+      jq -r '.list[]?' "$tmp/l.json" >> "$tmp/all.txt" 2>/dev/null || true
+      got=$((got + 1))
+    else
+      log "WARN fetch failed: $name"
+      fails=$((fails + 1))
+    fi
+  done
+
+  grep -F ':'  "$tmp/all.txt" | sort -u > "$tmp/v6.txt" || true
+  grep -Fv ':' "$tmp/all.txt" | sort -u > "$tmp/v4.txt" || true
+  local n4 n6; n4=$(grep -c . "$tmp/v4.txt" || true); n6=$(grep -c . "$tmp/v6.txt" || true)
+  if [ "$n4" -eq 0 ] && [ "$n6" -eq 0 ]; then
+    log "ERROR no entries fetched ($fails failures); keeping existing sets"
+    return 1
+  fi
+
+  mkdir -p "$STATE_DIR"
+  {
+    echo "create ${SET4}_tmp hash:net family inet maxelem 1048576 -exist"
+    echo "flush ${SET4}_tmp"
+    awk -v s="${SET4}_tmp" 'NF{print "add " s " " $0 " -exist"}' "$tmp/v4.txt"
+    echo "create ${SET4} hash:net family inet maxelem 1048576 -exist"
+    echo "swap ${SET4}_tmp ${SET4}"
+    echo "destroy ${SET4}_tmp"
+    echo "create ${SET6}_tmp hash:net family inet6 maxelem 1048576 -exist"
+    echo "flush ${SET6}_tmp"
+    awk -v s="${SET6}_tmp" 'NF{print "add " s " " $0 " -exist"}' "$tmp/v6.txt"
+    echo "create ${SET6} hash:net family inet6 maxelem 1048576 -exist"
+    echo "swap ${SET6}_tmp ${SET6}"
+    echo "destroy ${SET6}_tmp"
+  } > "$RESTORE_FILE"
+  chmod 0600 "$RESTORE_FILE"
+
+  ipset restore < "$RESTORE_FILE"
+  ensure_rules
+  log "updated: $got/${#LISTS[@]} lists, $n4 IPv4 + $n6 IPv6 entries ($fails failures)"
+}
+
+on() {
+  systemctl enable scanner-block-restore.service 2>/dev/null || true
+  apply
+  log "scanner-block ON"
+}
+
+off() {
+  systemctl disable scanner-block-restore.service 2>/dev/null || true
+  remove_rules
+  ipset destroy "$SET4" 2>/dev/null || true
+  ipset destroy "$SET6" 2>/dev/null || true
+  log "scanner-block OFF (firewall rules + sets removed)"
+}
+
+status() {
+  set +e
+  echo "== ipset =="
+  ipset list "$SET4" -t 2>/dev/null || echo "$SET4: absent"
+  ipset list "$SET6" -t 2>/dev/null || echo "$SET6: absent"
+  echo "== iptables INPUT =="
+  if iptables  -C INPUT -m set --match-set "$SET4" src -j DROP 2>/dev/null; then
+    echo "v4 DROP rule: active"; else echo "v4 DROP rule: MISSING"; fi
+  if ip6tables -C INPUT -m set --match-set "$SET6" src -j DROP 2>/dev/null; then
+    echo "v6 DROP rule: active"; else echo "v6 DROP rule: MISSING"; fi
+  echo "== boot-restore =="
+  echo "enabled: $(systemctl is-enabled scanner-block-restore.service 2>/dev/null)"
+}
+
+case "${1:-status}" in
+  update) update ;;
+  apply)  apply ;;
+  on)     on ;;
+  off)    off ;;
+  rules)  ensure_rules ;;
+  status) status ;;
+  *) echo "usage: scanner-block {on|off|update|apply|status|rules}"; exit 1 ;;
+esac

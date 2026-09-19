@@ -1,0 +1,23 @@
+--- pkg/server/http_server.go.orig	2026-05-19 22:50:06.598216294 +0200
++++ pkg/server/http_server.go	2026-05-19 22:50:06.640402304 +0200
+@@ -147,14 +147,18 @@
+ 			for _, domain := range h.options.Domains {
+ 				if h.options.RootTLD && stringsutil.HasSuffixI(r.Host, domain) {
+ 					ID := domain
+-					host, _, _ := net.SplitHostPort(r.RemoteAddr)
++					// PATCH: honor OriginIPHeader in RootTLD branch too (was shadowed upstream)
++					rootHost := host
++					if rootHost == "" {
++						rootHost, _, _ = net.SplitHostPort(r.RemoteAddr)
++					}
+ 					interaction := &Interaction{
+ 						Protocol:      httpProtocol(r),
+ 						UniqueID:      r.Host,
+ 						FullId:        r.Host,
+ 						RawRequest:    reqString,
+ 						RawResponse:   respString,
+-						RemoteAddress: host,
++						RemoteAddress: rootHost,
+ 						Timestamp:     time.Now(),
+ 					}
+ 					data, err := jsoniter.Marshal(interaction)

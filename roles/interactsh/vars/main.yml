@@ -1,0 +1,22 @@
+---
+interactsh_domain: "{{ interactsh_subdomain }}.{{ domain }}"
+interactsh_subdomain: i
+interactsh_user: "{{ ctf_user }}"
+interactsh_go_path: "/home/{{ ctf_user }}/go"
+interactsh_client_bin: "/home/{{ ctf_user }}/go/bin/interactsh-client"
+interactsh_server_bin: "/home/{{ ctf_user }}/go/bin/interactsh-server"
+interactsh_disk_path: /mnt/persistent/interactsh
+interactsh_http_index_path: /etc/interactsh/index.html
+# Internal HTTP/HTTPS ports — Caddy sits in front on 80/443 and forwards.
+interactsh_http_port: 8080
+interactsh_https_port: 8443
+
+# GUI configuration (separate role)
+interactsh_gui_domain: "{{ subdomain }}.{{ domain }}"
+interactsh_gui_root: /var/www/interactsh-web
+interactsh_gui_src: /opt/interactsh-web-src
+interactsh_gui_repo: https://github.com/projectdiscovery/interactsh-web.git
+
+# webhook_site_domain / webhook_site_upstream are defined in
+# roles/webhook_site/vars/main.yml and referenced from the Caddy template
+# below since Ansible role/vars are not scoped to the role that declares them.
