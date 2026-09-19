@@ -28,6 +28,7 @@ sudo pacman --sync --refresh --sysupgrade --needed git ansible packer gitleaks c
 sudo pacman --sync --refresh --sysupgrade --needed syncthing xdg-utils
 systemctl --user enable --now syncthing.service
 xdg-open http://127.0.0.1:8384
+```
 
 ## setup
 ```sh
@@ -41,7 +42,7 @@ chmod 600 config.local.yaml inventory vault.yaml
 
 vim config.local.yaml inventory vault.yaml
 
-# set your basic-auth pw and set it in vault.yml to use interactsh
+# set http-basic-auth pw to the output below
 caddy hash-password
 ansible-vault encrypt vault.yaml
 ```
@@ -74,7 +75,7 @@ ansible localhost -c local -m hetzner.hcloud.hcloud_volume \
 ## dns
 set your `domain` in `config.local.yaml`. defaults are `ctf` for the gui, `i` for interactsh, `wh` for webhook.site.
 
-if you have an api for your dns provider everything is set at deployment, i use porkbun's authoritative nameservers for the domain, you need to enable api-access obviously and supply the keys in `vault.yml`. deploying creates the records below.
+automatic dns currently supports porkbun only. use its authoritative nameservers, enable domain api access and supply `porkbun_api_key` + `porkbun_secret_key` in `vault.yaml`. deployment creates the records below.
 
 without api you have to create the records manually. use ttl 300 and disable any http/cdn proxy.
 
@@ -88,7 +89,7 @@ without api you have to create the records manually. use ttl 300 and disable any
 | ns | i | ns1.i.example.com. |
 | ns | i | ns2.i.example.com. |
 
-the `ns` records delegate `i.example.com` to interactsh. you only need to do this if you don't want to leak your oob targets to interactsh public servers. for normal ctfs, you might not need this and can skip dns deployment with:
+the `ns` records delegate `i.example.com` to your interactsh server. `--skip-tags dns` only skips the porkbun api tasks; it does not configure public interactsh servers or remove the need for manual dns.
 
 ```sh
 # manual dns
@@ -103,7 +104,55 @@ dig +short wh.example.com
 dig +trace test.i.example.com
 ```
 
-shows your public ip.
+the first two commands should return your server ip. the trace should reach your delegated interactsh server once it is running.
+
+## deploy / remove
+
+set the server hostname or public ip under `[ctf_servers]` in your local `inventory`.
+
+```sh
+# create / configure; add --skip-tags dns only for manually managed dns
+ansible-playbook --ask-vault-pass deploy.yaml
+```
+
+```sh
+# remove the server, keep the persistent volume; not the next setup step
+ansible-playbook --ask-vault-pass delete.yaml
+```
+
+if you keep your vault password in the ignored `.vault-pass`, use `--vault-password-file .vault-pass` instead of `--ask-vault-pass`.
+
+## web interfaces
+
+- `https://ctf.example.com`: interactsh gui, protected by caddy basic auth. use `vault_interactsh_gui_user` and the password you hashed, not the hash itself.
+- `https://wh.example.com`: webhook.site; open it and copy the unique webhook url. no caddy basic auth is configured here.
+- `i.example.com`: interactsh protocol endpoint, not the gui. clients use `vault_interactsh_token`, not the gui password.
+
+## blocking public scanners
+
+known scanner sources (censys, shodan, etc.) are loaded from misp warninglists into ipv4/ipv6 ipsets and dropped into ufw's service rules.
+
+ansible fetches the lists locally during deployment. the server restores them at boot and refreshes them weekly.
+
+```sh
+sudo scanner-block status
+sudo scanner-block update
+systemctl list-timers scanner-block-update.timer
+```
+
+to disable persistently, set this in `config.local.yaml`, then apply the role:
+
+```yaml
+scanner_block_enabled: false
+```
+
+```sh
+ansible-playbook --ask-vault-pass --tags scanner_block deploy.yaml
+```
+
+set it back to `true` and rerun to enable. `scanner-block off` alone is not persistent: the timer, ufw hook or next deploy can reapply it. `scanner_block_auto_update: false` disables only refreshes.
+
+keep `scanner_block_allowlist` empty unless you know what you do.
 
 ## interactsh
 
@@ -159,7 +208,7 @@ i() { ssh "$ctf_host" i; }
 adapt syncthing ports in `~/.ssh/config`:
 
 ```sshconfig
-host ctf
+host ctf-sync
     hostname ctf.example.com
     user ctf
     localforward 127.0.0.1:8385 127.0.0.1:8384
@@ -168,8 +217,7 @@ host ctf
 ```
 
 ```sh
-# leave running; open http://127.0.0.1:8385 locally
-ssh ctf
+ssh ctf-sync # leave running; open http://127.0.0.1:8385
 ```
 
 ansible binds syncthing gui to `127.0.0.1:8384` and blocks tcp/8384 with ufw.
@@ -224,6 +272,13 @@ change for your custom vpns.
 gdb/pwndbg is installed, but remote gdb not automatically open optionally binja debugger files are copied, but not started too. (`roles/ctf_tools/files/binja-debugger/`)
 
 tmux plugins set in `.tmux.conf` are installed automatically by ansible.
+
+the server also gets neovim, zsh/pure, fzf, ripgrep, gdb/pwndbg, radare2, pwntools and other ctf tools. neovim plugins bootstrap on first launch.
+
+```sh
+# optional: with mosh installed locally; server udp 60000–61000 is allowed
+mosh ctf@ctf.example.com
+```
 
 ## clipboard over ssh
 

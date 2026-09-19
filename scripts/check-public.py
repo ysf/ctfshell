@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Check the staged snapshot, never print matched private values."""
 import pathlib
 import re
 import subprocess
@@ -43,7 +42,6 @@ def main():
                 sys.exit('blocked: unreviewed path, symlink, submodule or merge conflict: ' + path)
             data = git('cat-file', 'blob', oid.decode())
             identifiers = data.lower()
-            # The selected public repository URL is intentional, not a host identifier.
             if path == 'README.md' and public_repo:
                 repo = public_repo[1].lower().encode()
                 identifiers = identifiers.replace(b'https://github.com/' + repo + b'.git', b'')
