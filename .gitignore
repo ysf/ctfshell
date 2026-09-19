@@ -10,10 +10,6 @@
 !/packer/files/archlinux/root/usr/
 !/packer/files/archlinux/root/usr/local/
 !/packer/files/archlinux/root/usr/local/bin/
-!/packer/files/nixos/
-!/packer/files/nixos/config/
-!/packer/files/nixos/config/hcloud/
-!/packer/files/nixos/config/hcloud/user/
 !/packer/templates/
 !/roles/
 !/roles/ctf_tools/
@@ -62,7 +58,6 @@
 !/inventory.example
 !/packer/LICENSE
 !/packer/files/archlinux/install.sh
-!/packer/files/archlinux/key-old.gpg
 !/packer/files/archlinux/key.gpg
 !/packer/files/archlinux/root/etc/systemd/system/hcloud-dl-metadata.service
 !/packer/files/archlinux/root/etc/systemd/system/hcloud-dl-userdata.service
@@ -73,16 +68,8 @@
 !/packer/files/archlinux/root/usr/local/bin/hcloud-network
 !/packer/files/filesystem.sh
 !/packer/files/hcloud-metadata
-!/packer/files/nixos/config/configuration.nix
-!/packer/files/nixos/config/hcloud/default.nix
-!/packer/files/nixos/config/hcloud/hcloud-metadata
-!/packer/files/nixos/config/hcloud/hcloud-metadata.nix
-!/packer/files/nixos/config/hcloud/user/configuration.nix
-!/packer/files/nixos/install.sh
-!/packer/files/nixos/key.gpg
 !/packer/local.example.pkrvars.hcl
 !/packer/templates/archlinux.pkr.hcl
-!/packer/templates/nixos.pkr.hcl
 !/requirements.yml
 !/roles/ctf_tools/tasks/main.yml
 !/roles/dotfiles/files/.config/nvim/init.lua
